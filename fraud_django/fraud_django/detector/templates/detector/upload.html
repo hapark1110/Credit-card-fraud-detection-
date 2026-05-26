@@ -1,0 +1,109 @@
+{% extends 'detector/base.html' %}
+{% block title %}Upload CSV{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Upload file CSV</h1>
+  <p>Tải lên file giao dịch (tối đa 500 dòng)</p>
+</div>
+
+<div id="uploadSection">
+  <div class="card">
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="display:block;margin:0 auto 12px;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <h3>Kéo thả hoặc click để chọn file CSV</h3>
+      <p class="mt-4">Hỗ trợ định dạng CSV từ dataset Kaggle fraud-detection</p>
+      <div style="margin-top:16px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+        <span class="badge badge-sim">trans_date_trans_time</span>
+        <span class="badge badge-sim">amt</span>
+        <span class="badge badge-sim">category</span>
+        <span class="badge badge-sim">merchant</span>
+        <span class="badge badge-sim">city_pop</span>
+        <span class="badge badge-sim">is_fraud (optional)</span>
+      </div>
+    </div>
+    <input type="file" id="fileInput" accept=".csv" class="hidden" onchange="handleFile(this.files[0])"/>
+
+    <div id="fileInfo" class="hidden mt-16" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--border);">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <div style="flex:1;">
+        <div id="fileName" style="font-weight:500;"></div>
+        <div id="fileSize" class="text-muted text-small"></div>
+      </div>
+      <button class="btn btn-primary" onclick="uploadAndAnalyze()">
+        <span id="uploadBtnContent">Phân tích ngay →</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="card mt-16" style="padding:16px 20px;">
+    <div class="card-title" style="margin-bottom:10px;">Hướng dẫn</div>
+    <div style="font-size:13px;color:var(--text2);line-height:1.8;">
+      <p>• File CSV phải có ít nhất cột <span class="mono" style="color:var(--blue);font-size:12px;">amt</span> (số tiền giao dịch)</p>
+      <p>• Nếu có cột <span class="mono" style="color:var(--blue);font-size:12px;">trans_date_trans_time</span>, hệ thống sẽ tự trích xuất giờ, thứ, tháng</p>
+      <p>• Tối đa 500 dòng mỗi lần upload</p>
+    </div>
+  </div>
+</div>
+
+<div id="loadingSection" class="hidden" style="text-align:center;padding:64px;">
+  <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 16px;"></div>
+  <p style="color:var(--text2);" id="loadingMsg">Đang phân tích <span id="loadingCount"></span> giao dịch...</p>
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+let selectedFile = null;
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+  if (!file) return;
+  selectedFile = file;
+  document.getElementById('fileName').textContent = file.name;
+  document.getElementById('fileSize').textContent = (file.size / 1024).toFixed(1) + ' KB';
+  document.getElementById('fileInfo').classList.remove('hidden');
+  document.getElementById('fileInfo').style.display = 'flex';
+}
+
+async function uploadAndAnalyze() {
+  if (!selectedFile) return;
+  document.getElementById('uploadBtnContent').innerHTML = '<span class="spinner"></span>';
+
+  // Count rows
+  const text = await selectedFile.text();
+  const lines = text.trim().split('\n').length - 1;
+  document.getElementById('loadingCount').textContent = Math.min(lines, 500).toLocaleString();
+  document.getElementById('uploadSection').classList.add('hidden');
+  document.getElementById('loadingSection').classList.remove('hidden');
+  document.getElementById('loadingSection').style.display = 'block';
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+
+  try {
+    const res = await fetch('/api/upload-analyze/', {
+      method: 'POST',
+      headers: { 'X-CSRFToken': window.CSRF },
+      body: formData,
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    sessionStorage.setItem('dashboardData', JSON.stringify(d));
+    window.location.href = '/dashboard/';
+  } catch(e) {
+    document.getElementById('loadingSection').classList.add('hidden');
+    document.getElementById('uploadSection').classList.remove('hidden');
+    document.getElementById('uploadSection').style.display = 'block';
+    document.getElementById('uploadBtnContent').textContent = 'Phân tích ngay →';
+    alert('Lỗi: ' + e.message);
+  }
+}
+</script>
+{% endblock %}

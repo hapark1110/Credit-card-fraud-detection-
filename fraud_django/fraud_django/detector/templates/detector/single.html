@@ -1,0 +1,491 @@
+{% extends 'detector/base.html' %}
+{% block title %}Giao dịch đơn{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Phân tích giao dịch đơn lẻ</h1>
+  <p>Nhập thông tin giao dịch</p>
+</div>
+
+<!-- Row 1: Form + Result -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
+
+  <!-- Form -->
+  <div class="card">
+    <div class="card-title">Thông tin giao dịch</div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px;">
+      <button class="btn btn-sm btn-outline" onclick="fillSample('fraud1')">⚠ Gian lận #1</button>
+      <button class="btn btn-sm btn-outline" onclick="fillSample('fraud2')">⚠ Gian lận #2</button>
+      <button class="btn btn-sm btn-outline" onclick="fillSample('legit1')">✓ Bình thường #1</button>
+      <button class="btn btn-sm btn-outline" onclick="fillSample('legit2')">✓ Bình thường #2</button>
+    </div>
+
+    <div class="form-grid-2">
+      <div class="form-group">
+        <label class="form-label">Số tiền (USD)</label>
+        <input class="form-control" id="amt" type="number" value="52.50" min="1" step="0.01"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Danh mục</label>
+        <select class="form-control" id="category">
+          <option value="grocery_pos">Siêu thị (grocery_pos)</option>
+          <option value="shopping_net">Mua online (shopping_net)</option>
+          <option value="gas_transport">Xăng / Đi lại</option>
+          <option value="entertainment">Giải trí</option>
+          <option value="food_dining">Ăn uống</option>
+          <option value="health_fitness">Sức khoẻ</option>
+          <option value="shopping_pos">Mua trực tiếp</option>
+          <option value="misc_net">Khác - online (misc_net)</option>
+          <option value="misc_pos">Khác - trực tiếp</option>
+          <option value="travel">Du lịch</option>
+          <option value="kids_pets">Trẻ em / Thú cưng</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Giờ giao dịch (0–23)</label>
+        <input class="form-control" id="hour" type="number" value="14" min="0" max="23"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Thứ (0=T2 … 6=CN)</label>
+        <input class="form-control" id="dow" type="number" value="2" min="0" max="6"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Dân số thành phố</label>
+        <input class="form-control" id="city_pop" type="number" value="45000"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tuổi chủ thẻ</label>
+        <input class="form-control" id="age" type="number" value="35" min="18" max="90"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Khoảng cách tới merchant (km)</label>
+        <input class="form-control" id="dist_km" type="number" value="4.5" step="0.1"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Giới tính</label>
+        <select class="form-control" id="gender">
+          <option value="F">Nữ</option>
+          <option value="M">Nam</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">TB giao dịch của user (USD)</label>
+        <input class="form-control" id="user_avg_amt" type="number" value="65.00" step="0.01"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Số lần GD lịch sử</label>
+        <input class="form-control" id="user_txn_count" type="number" value="120"/>
+      </div>
+    </div>
+
+    <div style="margin-top:4px;">
+      <button class="btn btn-primary btn-full" id="analyzeBtn" onclick="analyze()">
+        <span id="btnContent">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Phân tích
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Result card -->
+  <div id="resultPane">
+    <div class="card" style="text-align:center; padding:48px 24px; color:var(--text2);">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 12px; opacity:.3; display:block;">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      <p style="font-size:13px;">Kết quả phân tích sẽ hiển thị ở đây</p>
+    </div>
+  </div>
+</div>
+
+<!-- Row 2: Explain panel (chỉ hiện khi FRAUD) -->
+<div id="explainSection" style="display:none; margin-top:20px;">
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+    <div style="height:1px; flex:1; background:var(--border);"></div>
+    <div style="font-size:13px; font-weight:600; color:var(--red); white-space:nowrap;">
+      🔍 Giải thích tại sao model phán đoán là GIAN LẬN
+    </div>
+    <div style="height:1px; flex:1; background:var(--border);"></div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
+
+    <!-- SHAP-style bar chart -->
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <div class="card-title" style="margin-bottom:0;">📊 Feature Impact</div>
+        <span id="explainMethodTag" class="badge badge-sim">⚙ Rules</span>
+      </div>
+      <p style="font-size:11px; color:var(--text3); margin-bottom:14px;">
+        Độ đóng góp của từng đặc trưng &nbsp;
+        <span style="color:#fca5a5;">■</span> tăng xác suất FRAUD &nbsp;
+        <span style="color:#86efac;">■</span> giảm xác suất FRAUD
+      </p>
+      <div id="shapBars" style="display:flex; flex-direction:column; gap:7px;"></div>
+    </div>
+
+    <!-- Natural language + Top factors -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+
+      <!-- Summary sentences -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px;">📝 Phân tích nguyên nhân</div>
+        <div id="explainSummary" style="font-size:13px; color:var(--text2); line-height:1.9;"></div>
+      </div>
+
+      <!-- Top factor pills -->
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px;">🏆 Top yếu tố ảnh hưởng nhất</div>
+        <div id="explainTopFactors"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal (dùng chung cho Live Monitor) -->
+<div id="explainModal" style="display:none; position:fixed; inset:0; z-index:300; background:rgba(0,0,0,.65); backdrop-filter:blur(5px); overflow-y:auto;">
+  <div style="max-width:780px; margin:40px auto; padding:0 16px 60px;">
+    <div class="card" style="position:relative;">
+      <button onclick="closeModal()" style="position:absolute;top:14px;right:16px;background:none;border:none;color:var(--text2);cursor:pointer;font-size:20px;line-height:1;">✕</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ── SHAP bars ── */
+.shap-row { display:flex; align-items:center; gap:8px; }
+.shap-label { font-size:12px; color:var(--text2); width:175px; flex-shrink:0; text-align:right;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shap-bar-wrap { flex:1; height:18px; background:var(--bg3); border-radius:3px; overflow:visible;
+                 position:relative; }
+.shap-bar-center { position:absolute; left:50%; top:-2px; bottom:-2px; width:1.5px;
+                   background:var(--border2); z-index:1; }
+.shap-bar { height:100%; border-radius:3px; transition:width .55s cubic-bezier(.4,0,.2,1);
+            position:absolute; top:0; }
+.shap-bar.pos { background: linear-gradient(90deg, rgba(239,68,68,.5), rgba(239,68,68,.85)); left:50%; }
+.shap-bar.neg { background: linear-gradient(270deg, rgba(34,197,94,.5), rgba(34,197,94,.85)); right:50%; }
+.shap-val { font-size:11px; width:46px; text-align:right; font-family:var(--mono); flex-shrink:0; }
+.shap-raw { font-size:10px; color:var(--text3); width:62px; flex-shrink:0; font-family:var(--mono); }
+
+/* ── Factor pills ── */
+.factor-pill { display:flex; align-items:flex-start; gap:10px; padding:10px 12px;
+               border-radius:var(--radius); margin-bottom:6px; background:var(--bg3);
+               border-left:3px solid var(--border2); font-size:12px; }
+.factor-pill.rank-1 { border-left-color:var(--red); background:rgba(239,68,68,.05); }
+.factor-pill.rank-2 { border-left-color:var(--orange); }
+.factor-pill.rank-3 { border-left-color:var(--yellow); }
+.factor-pill.rank-other { border-left-color:var(--text3); }
+.fp-rank { font-size:11px; color:var(--text3); min-width:18px; margin-top:1px; font-weight:700; }
+.fp-body { flex:1; }
+.fp-name { font-weight:600; color:var(--text); margin-bottom:3px; }
+.fp-desc { color:var(--text2); line-height:1.5; }
+.fp-score { font-family:var(--mono); font-size:12px; font-weight:700; min-width:44px;
+            text-align:right; flex-shrink:0; }
+</style>
+
+<script>
+const SAMPLES = {
+  fraud1: {amt:892.30, hour:2, dow:5, category:'shopping_net', city_pop:1200, age:27, dist_km:312.4, gender:'M', user_avg_amt:41.2, user_txn_count:8},
+  fraud2: {amt:445.00, hour:23, dow:0, category:'misc_net',    city_pop:800,  age:22, dist_km:489.1, gender:'F', user_avg_amt:55.0, user_txn_count:14},
+  legit1: {amt:52.50,  hour:14, dow:2, category:'grocery_pos', city_pop:45000,age:35, dist_km:3.2,  gender:'F', user_avg_amt:68.5, user_txn_count:210},
+  legit2: {amt:18.90,  hour:12, dow:4, category:'food_dining', city_pop:120000,age:42,dist_km:1.1,  gender:'M', user_avg_amt:32.0, user_txn_count:380},
+};
+
+function fillSample(key) {
+  const s = SAMPLES[key];
+  Object.entries(s).forEach(([k,v]) => { const el=document.getElementById(k); if(el) el.value=v; });
+}
+
+function getTxn() {
+  return {
+    amt:            parseFloat(document.getElementById('amt').value) || 0,
+    hour:           parseInt(document.getElementById('hour').value)  || 0,
+    dow:            parseInt(document.getElementById('dow').value)   || 0,
+    category:       document.getElementById('category').value,
+    city_pop:       parseInt(document.getElementById('city_pop').value) || 0,
+    age:            parseInt(document.getElementById('age').value)   || 35,
+    dist_km:        parseFloat(document.getElementById('dist_km').value) || 0,
+    gender:         document.getElementById('gender').value,
+    user_avg_amt:   parseFloat(document.getElementById('user_avg_amt').value) || 65,
+    user_txn_count: parseInt(document.getElementById('user_txn_count').value) || 100,
+    month:          new Date().getMonth() + 1,
+  };
+}
+
+// ── Main analyze ─────────────────────────────────────────────────────────
+async function analyze() {
+  const btn  = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  document.getElementById('btnContent').innerHTML = '<span class="spinner"></span> Đang chạy model...';
+  document.getElementById('explainSection').style.display = 'none';
+
+  const txn = getTxn();
+  window._lastTxn = txn;
+
+  try {
+    const res = await fetch('/api/predict/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF },
+      body: JSON.stringify(txn),
+    });
+    const d = await res.json();
+    renderResult(d, txn);
+    if (d.verdict === 'FRAUD') loadExplain(txn);   // auto-load explain for fraud
+  } catch(e) {
+    document.getElementById('resultPane').innerHTML =
+      `<div class="card" style="color:var(--red);">Lỗi kết nối: ${e.message}</div>`;
+  }
+  btn.disabled = false;
+  document.getElementById('btnContent').innerHTML =
+    `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg> Phân tích với Stacking Model`;
+}
+
+// ── Render result card ───────────────────────────────────────────────────
+function renderResult(d, txn) {
+  const isFraud  = d.verdict === 'FRAUD';
+  const cls      = isFraud ? 'fraud' : 'legit';
+  const p        = d.meta_prob;
+  const pct      = (p * 100).toFixed(1);
+  const RCMAP    = {CRITICAL:'#ef4444',HIGH:'#f97316',MEDIUM:'#3b82f6',LOW:'#22c55e'};
+  const riskColor= RCMAP[d.risk_level] || '#3b82f6';
+  const gap      = isFraud
+    ? `<span style="color:var(--red);">+${((p-.3)*100).toFixed(1)}% trên ngưỡng</span>`
+    : `<span style="color:var(--green);">cách ngưỡng ${((.3-p)*100).toFixed(1)}%</span>`;
+  const modeTag  = d.mode === 'model'
+    ? `<span class="badge badge-model">✦ Real Model</span>`
+    : `<span class="badge badge-sim">⚙ Simulation</span>`;
+
+  document.getElementById('resultPane').innerHTML = `
+    <div class="result-card ${cls}">
+      <div class="result-verdict">
+        <div class="verdict-icon ${cls}">${isFraud ? '⚠️' : '✅'}</div>
+        <div class="verdict-text">
+          <h2 class="${cls}">${isFraud ? 'GIAN LẬN PHÁT HIỆN' : 'GIAO DỊCH HỢP LỆ'}</h2>
+          <p>Rủi ro: <span style="color:${riskColor};font-weight:600;">${d.risk_level}</span>
+             &nbsp;·&nbsp; ${gap} &nbsp;·&nbsp; ${modeTag}</p>
+        </div>
+      </div>
+
+      <div class="model-scores">
+        <div class="model-score-card">
+          <div class="model-score-label">XGBoost</div>
+          <div class="model-score-val" style="color:#3b82f6;">${(d.xgb_prob*100).toFixed(1)}%</div>
+          <div class="model-score-name">Base model 1</div>
+        </div>
+        <div class="model-score-card">
+          <div class="model-score-label">LightGBM</div>
+          <div class="model-score-val" style="color:#22c55e;">${(d.lgb_prob*100).toFixed(1)}%</div>
+          <div class="model-score-name">Base model 2</div>
+        </div>
+        <div class="model-score-card">
+          <div class="model-score-label">Stack (LogReg)</div>
+          <div class="model-score-val" style="color:${isFraud?'#ef4444':'#22c55e'};">${pct}%</div>
+          <div class="model-score-name">Meta-learner ← final</div>
+        </div>
+      </div>
+
+      <div class="prob-bar-wrap" style="margin:12px 0;">
+        <div class="prob-bar-labels">
+          <span>Xác suất gian lận (Stack)</span>
+          <span style="font-weight:600;">${pct}%</span>
+        </div>
+        <div class="prob-bar-bg">
+          <div class="prob-bar-fill ${cls}" style="width:${Math.min(pct,100)}%;"></div>
+        </div>
+        <div class="threshold-marker"></div>
+      </div>
+
+      ${isFraud ? `
+      <div style="margin-top:12px; padding:10px 14px; background:rgba(239,68,68,.08);
+                  border:1px solid rgba(239,68,68,.25); border-radius:6px;
+                  font-size:12px; color:#fca5a5; display:flex; align-items:center; gap:8px;">
+        <span>🔍</span>
+        <span>Đang tải giải thích chi tiết... Xem bên dưới ↓</span>
+      </div>` : ''}
+    </div>`;
+}
+
+// ── Load & render explain ────────────────────────────────────────────────
+async function loadExplain(txn) {
+  const sec = document.getElementById('explainSection');
+  sec.style.display = 'block';
+  document.getElementById('shapBars').innerHTML =
+    '<div style="color:var(--text3);font-size:12px;display:flex;align-items:center;gap:8px;">' +
+    '<span class="spinner"></span> Đang tính SHAP values...</div>';
+  document.getElementById('explainSummary').innerHTML = '';
+  document.getElementById('explainTopFactors').innerHTML = '';
+
+  try {
+    const res = await fetch('/api/explain/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF },
+      body: JSON.stringify(txn),
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    renderExplainPanel(d);
+    sec.scrollIntoView({ behavior:'smooth', block:'start' });
+  } catch(e) {
+    document.getElementById('shapBars').innerHTML =
+      `<div style="color:var(--red);font-size:12px;">Lỗi: ${e.message}</div>`;
+  }
+}
+
+// ── Render explain into inline panel ────────────────────────────────────
+function renderExplainPanel(d) {
+  _renderShapBars(d, 'shapBars', 'explainMethodTag', 175, 10);
+  _renderSummary(d, 'explainSummary');
+  _renderFactorPills(d, 'explainTopFactors', 5);
+}
+
+// ── Shared sub-renderers ─────────────────────────────────────────────────
+function _renderShapBars(d, barElId, tagElId, labelW, maxFeats) {
+  const features = d.features || [];
+  const maxAbs   = Math.max(...features.map(f => f.abs_impact), 0.001);
+
+  if (tagElId) {
+    const TAG = { shap:'✦ SHAP (TreeExplainer)', feature_importance:'📈 Feature Importance', rules:'⚙ Rules-based' };
+    const el = document.getElementById(tagElId);
+    if (el) {
+      el.textContent  = TAG[d.method] || d.method;
+      el.className    = d.method === 'shap' ? 'badge badge-model' : 'badge badge-sim';
+    }
+  }
+
+  const html = features.slice(0, maxFeats).map(f => {
+    const pct     = (f.abs_impact / maxAbs * 42).toFixed(1);
+    const isPos   = f.direction === 'increase';
+    const valColor= isPos ? '#fca5a5' : '#86efac';
+    const rawDisp = f.unit === '$'
+      ? `$${parseFloat(f.raw_value).toFixed(1)}`
+      : `${parseFloat(f.raw_value).toFixed(f.raw_value < 10 ? 2 : 0)}${f.unit}`;
+    const tooltip = f.explain || f.display_name;
+
+    return `
+      <div class="shap-row" title="${tooltip}">
+        <div class="shap-label" style="width:${labelW}px;" title="${f.display_name}">${f.display_name}</div>
+        <div class="shap-bar-wrap">
+          <div class="shap-bar-center"></div>
+          <div class="shap-bar ${isPos?'pos':'neg'}" style="${isPos?'left:50%':'right:50%'};width:${pct}%;"></div>
+        </div>
+        <div class="shap-val" style="color:${valColor};">${isPos?'+':'-'}${f.abs_impact.toFixed(3)}</div>
+        <div class="shap-raw">${rawDisp}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById(barElId).innerHTML = html ||
+    '<div style="color:var(--text3);font-size:12px;">Không có dữ liệu</div>';
+}
+
+function _renderSummary(d, elId) {
+  const html = (d.summary || []).map((s, i) =>
+    `<p style="margin-bottom:10px; padding-left:14px;
+               border-left:2px solid ${i===0?'var(--red)':'var(--border2)'};
+               line-height:1.7;">${s}</p>`
+  ).join('');
+  document.getElementById(elId).innerHTML = html ||
+    '<p style="color:var(--text3);">Không có giải thích.</p>';
+}
+
+function _renderFactorPills(d, elId, count) {
+  const features = (d.features || []).slice(0, count);
+  const html = features.map((f, i) => {
+    const rankCls   = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+    const isPos     = f.direction === 'increase';
+    const scoreColor= isPos ? 'var(--red)' : 'var(--green)';
+    const desc      = f.explain || `Giá trị: ${f.raw_value}${f.unit}`;
+    const rawDisp   = f.unit === '$'
+      ? `$${parseFloat(f.raw_value).toFixed(2)}`
+      : `${f.raw_value}${f.unit}`;
+    return `
+      <div class="factor-pill ${rankCls}">
+        <div class="fp-rank">#${i+1}</div>
+        <div class="fp-body">
+          <div class="fp-name">${f.display_name}
+            <span style="font-weight:400;color:var(--text3);font-size:11px;">(${rawDisp})</span>
+          </div>
+          <div class="fp-desc">${desc}</div>
+        </div>
+        <div class="fp-score" style="color:${scoreColor};">${isPos?'↑':'↓'} ${(f.abs_impact*100).toFixed(1)}%</div>
+      </div>`;
+  }).join('');
+  document.getElementById(elId).innerHTML = html ||
+    '<div style="color:var(--text3);font-size:12px;">Không có dữ liệu</div>';
+}
+
+// ── Modal (used by Live Monitor via showExplainModal) ───────────────────
+function closeModal() {
+  document.getElementById('explainModal').style.display = 'none';
+}
+document.getElementById('explainModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+window.showExplainModal = async function(txn, predResult) {
+  const modal   = document.getElementById('explainModal');
+  const content = document.getElementById('modalContent');
+  modal.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+
+  const name    = `${txn.first||''} ${txn.last||''}`.trim() || 'Chủ thẻ';
+  const probPct = (parseFloat(predResult?.meta_prob||0)*100).toFixed(1);
+
+  content.innerHTML = `
+    <div style="padding-bottom:14px; margin-bottom:16px; border-bottom:1px solid var(--border);">
+      <div style="font-size:18px; font-weight:700; color:var(--red); margin-bottom:6px;">
+        ⚠ Giao dịch GIAN LẬN — ${name}
+      </div>
+      <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--text2);">
+        <span>💰 <b style="color:var(--text);">$${parseFloat(txn.amt||0).toFixed(2)}</b></span>
+        <span>🏪 ${txn.category||'—'}</span>
+        <span>🌆 ${txn.city||'—'}</span>
+        <span>🕐 ${txn.hour||0}h</span>
+        <span>📍 ${txn.dist_km||0} km</span>
+        <span>Xác suất: <b style="color:var(--red);">${probPct}%</b></span>
+        <span>XGB: ${(parseFloat(predResult?.xgb_prob||0)*100).toFixed(1)}%</span>
+        <span>LGB: ${(parseFloat(predResult?.lgb_prob||0)*100).toFixed(1)}%</span>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <div>
+        <div class="card-title" style="margin-bottom:6px;">📊 Feature Impact</div>
+        <p style="font-size:11px;color:var(--text3);margin-bottom:12px;">
+          <span style="color:#fca5a5;">■</span> tăng &nbsp;
+          <span style="color:#86efac;">■</span> giảm xác suất gian lận
+        </p>
+        <div id="modalShapBars"><div style="display:flex;align-items:center;gap:8px;color:var(--text3);font-size:12px;"><span class="spinner"></span> Đang tính...</div></div>
+      </div>
+      <div>
+        <div class="card-title" style="margin-bottom:10px;">📝 Phân tích nguyên nhân</div>
+        <div id="modalSummary" style="font-size:12px;color:var(--text2);line-height:1.8;"></div>
+        <div class="card-title" style="margin-top:14px;margin-bottom:8px;">🏆 Top yếu tố</div>
+        <div id="modalFactors"></div>
+      </div>
+    </div>`;
+
+  try {
+    const res = await fetch('/api/explain/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.CSRF },
+      body: JSON.stringify(txn),
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+
+    _renderShapBars(d, 'modalShapBars', null, 140, 8);
+    _renderSummary(d, 'modalSummary');
+    _renderFactorPills(d, 'modalFactors', 4);
+  } catch(e) {
+    document.getElementById('modalShapBars').innerHTML =
+      `<div style="color:var(--red);font-size:12px;">Lỗi: ${e.message}</div>`;
+  }
+};
+
+window.closeExplainModal = function() {
+  closeModal();
+  document.body.style.overflow = '';
+};
+</script>
+{% endblock %}

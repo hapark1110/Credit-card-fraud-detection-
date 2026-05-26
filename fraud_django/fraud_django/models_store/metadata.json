@@ -1,0 +1,52 @@
+{
+  "trained_at": "2026-05-07T13:38:45.556757",
+  "threshold": 0.3,
+  "n_features": 33,
+  "feature_names": [
+    "merchant",
+    "category",
+    "amt",
+    "gender",
+    "city",
+    "state",
+    "zip",
+    "lat",
+    "long",
+    "city_pop",
+    "job",
+    "merch_lat",
+    "merch_long",
+    "trans_hour",
+    "trans_month",
+    "trans_weekday",
+    "is_weekend",
+    "is_night",
+    "hour_sin",
+    "hour_cos",
+    "age",
+    "distance_km",
+    "log_distance",
+    "log_amt",
+    "tx_count_1h",
+    "amt_sum_1h",
+    "avg_amt_user",
+    "tx_count_user",
+    "std_amt_user",
+    "amt_zscore",
+    "amt_ratio",
+    "dist_from_prev",
+    "log_dist_from_prev"
+  ],
+  "roc_auc": 0.9967,
+  "pr_auc": 0.8969,
+  "stacking": {
+    "level1": [
+      "XGBoost",
+      "LightGBM"
+    ],
+    "level2": "LogisticRegression"
+  },
+  "smote_ratio": 0.2,
+  "scaler_mean_amt": 342.92946742953023,
+  "scaler_std_amt": 194.98230627552235
+}

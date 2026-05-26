@@ -1,0 +1,319 @@
+{% extends 'detector/base.html' %}
+{% block title %}Live Monitor{% endblock %}
+{% block content %}
+<div class="live-header">
+  <div>
+    <div class="page-header" style="margin-bottom:4px;">
+      <h1>Mô phỏng giao dịch trực tiếp</h1>
+      <p>Giao dịch ngẫu nhiên được tạo liên tục và phân tích bởi stacking model</p>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div class="live-indicator" id="liveIndicator">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="liveStatus">Chờ khởi động...</span>
+    </div>
+    <button class="btn btn-green btn-sm" id="startBtn" onclick="startStream()">▶ Start</button>
+    <button class="btn btn-outline btn-sm" id="stopBtn" onclick="stopStream()" disabled>■ Stop</button>
+    <button class="btn btn-outline btn-sm" onclick="clearFeed()">✕ Xóa</button>
+  </div>
+</div>
+
+<!-- Live mini stats -->
+<div class="live-stats">
+  <div class="stat-card">
+    <div class="stat-label">Tổng giao dịch</div>
+    <div class="stat-value blue" id="ls-total">0</div>
+    <div class="stat-sub">đã xử lý</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Gian lận</div>
+    <div class="stat-value red" id="ls-fraud">0</div>
+    <div class="stat-sub" id="ls-rate">0.0% tỷ lệ</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Tổng số tiền</div>
+    <div class="stat-value blue" id="ls-amt">$0</div>
+    <div class="stat-sub">tất cả GD</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Giá trị gian lận</div>
+    <div class="stat-value red" id="ls-fraud-amt">$0</div>
+    <div class="stat-sub">nghi ngờ</div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns:1fr 380px; gap:16px; align-items:start;">
+
+  <!-- Feed -->
+  <div class="card" style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:0;">Giao dịch</div>
+      <span id="modeTag" class="badge badge-sim">⚙ Mô phỏng</span>
+    </div>
+    <!-- Header row -->
+    <div style="display:flex;gap:10px;padding:0 12px 8px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);">
+      <span style="width:26px;">#</span>
+      <span style="width:55px;">Giờ</span>
+      <span style="min-width:100px;">Tên</span>
+      <span style="flex:1;">Danh mục</span>
+      <span style="width:90px;">Thành phố</span>
+      <span style="width:70px;text-align:right;">Tiền</span>
+      <span style="width:52px;text-align:right;">Prob</span>
+      <span style="width:64px;text-align:right;">Kết quả</span>
+    </div>
+    <div class="txn-feed" id="txnFeed">
+      <div style="text-align:center;padding:32px;color:var(--text3);font-size:13px;">
+        Nhấn <strong>Start</strong> để bắt đầu theo dõi...
+      </div>
+    </div>
+  </div>
+
+  <!-- Right panel: charts + alerts -->
+  <div style="display:flex;flex-direction:column;gap:12px;">
+
+    <!-- Mini probability chart -->
+    <div class="card" style="padding:16px;">
+      <div class="card-title" style="margin-bottom:10px;">Xác suất (50 GD gần nhất)</div>
+      <div style="height:140px;"><canvas id="chartProb"></canvas></div>
+    </div>
+
+    <!-- Fraud rate trend -->
+    <div class="card" style="padding:16px;">
+      <div class="card-title" style="margin-bottom:10px;">Tỷ lệ gian lận (%)</div>
+      <div style="height:120px;"><canvas id="chartRate"></canvas></div>
+    </div>
+
+    <!-- Recent fraud alerts -->
+    <div class="card" style="padding:16px;">
+      <div class="card-title" style="margin-bottom:10px;">🚨 Cảnh báo gian lận gần đây</div>
+      <div id="alertFeed" style="max-height:200px;overflow-y:auto;">
+        <div style="color:var(--text3);font-size:12px;text-align:center;padding:16px;">Chưa có cảnh báo</div>
+      </div>
+    </div>
+
+    <!-- Category breakdown -->
+    <div class="card" style="padding:16px;">
+      <div class="card-title" style="margin-bottom:10px;">Phân bố danh mục (gian lận)</div>
+      <div style="height:160px;"><canvas id="chartCat"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let evtSource = null;
+let stats = { total:0, fraud:0, amt:0, fraudAmt:0 };
+const probHistory  = [];   // last 50 meta_prob values
+const rateHistory  = [];   // fraud rate per 10-txn window
+const catFraud     = {};   // category -> fraud count
+const WINDOW       = 10;
+let windowFraud    = 0;
+let windowCount    = 0;
+
+// ── Charts ─────────────────────────────────────────────────────────────────
+Chart.defaults.color = '#8892a4';
+Chart.defaults.font  = { family: '-apple-system, sans-serif', size: 11 };
+const GRID = 'rgba(42,51,71,.6)';
+
+const probChart = new Chart(document.getElementById('chartProb'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.1)',
+      tension: 0.4, fill: true, pointRadius: 2, borderWidth: 1.5,
+    }],
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:false,
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{display:false},
+      y:{grid:{color:GRID}, min:0, max:1, ticks:{callback:v=>(v*100).toFixed(0)+'%'}},
+    },
+  },
+});
+
+const rateChart = new Chart(document.getElementById('chartRate'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      data: [], borderColor: '#ef4444', backgroundColor:'rgba(239,68,68,.1)',
+      tension: 0.4, fill:true, pointRadius:2, borderWidth:1.5,
+    }],
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:false,
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{display:false},
+      y:{grid:{color:GRID}, min:0, ticks:{callback:v=>v+'%'}},
+    },
+  },
+});
+
+const catChart = new Chart(document.getElementById('chartCat'), {
+  type: 'doughnut',
+  data: { labels:[], datasets:[{data:[], backgroundColor:['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#a855f7','#06b6d4','#84cc16','#f43f5e','#8b5cf6']}] },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ position:'right', labels:{ boxWidth:10, font:{size:10} } } },
+  },
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function updateStats(d) {
+  stats.total++;
+  stats.amt += d.amt;
+  if (d.verdict === 'FRAUD') { stats.fraud++; stats.fraudAmt += d.amt; }
+
+  document.getElementById('ls-total').textContent = stats.total.toLocaleString();
+  document.getElementById('ls-fraud').textContent = stats.fraud.toLocaleString();
+  document.getElementById('ls-rate').textContent  = (stats.fraud/stats.total*100).toFixed(1) + '% tỷ lệ';
+  document.getElementById('ls-amt').textContent   = '$' + stats.amt.toFixed(0);
+  document.getElementById('ls-fraud-amt').textContent = '$' + stats.fraudAmt.toFixed(0);
+}
+
+function updateProbChart(prob) {
+  probHistory.push(prob);
+  if (probHistory.length > 50) probHistory.shift();
+  probChart.data.labels   = probHistory.map((_,i)=>i);
+  probChart.data.datasets[0].data = [...probHistory];
+  probChart.data.datasets[0].pointBackgroundColor = probHistory.map(p => p >= 0.3 ? '#ef4444' : '#3b82f6');
+  probChart.update('none');
+}
+
+function updateRateChart() {
+  windowCount++;
+  if (stats.total > 0 && stats.total % WINDOW === 0) {
+    const rate = (windowFraud / WINDOW * 100).toFixed(1);
+    rateHistory.push(parseFloat(rate));
+    if (rateHistory.length > 30) rateHistory.shift();
+    rateChart.data.labels   = rateHistory.map((_,i)=>i);
+    rateChart.data.datasets[0].data = [...rateHistory];
+    rateChart.update('none');
+    windowFraud = 0;
+  }
+  if (stats.fraud > 0 && (stats.total - 1) % WINDOW !== (stats.total) % WINDOW) {
+    // count fraud for this window
+  }
+}
+
+function updateCatChart(d) {
+  if (d.verdict !== 'FRAUD') return;
+  catFraud[d.category] = (catFraud[d.category] || 0) + 1;
+  const sorted = Object.entries(catFraud).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  catChart.data.labels   = sorted.map(e=>e[0]);
+  catChart.data.datasets[0].data = sorted.map(e=>e[1]);
+  catChart.update('none');
+}
+
+function addTxnRow(d) {
+  const feed = document.getElementById('txnFeed');
+
+  // Remove placeholder
+  const placeholder = feed.querySelector('div');
+  if (placeholder && !placeholder.classList.contains('txn-item')) placeholder.remove();
+
+  const isFraud = d.verdict === 'FRAUD';
+  const pct     = (d.meta_prob * 100).toFixed(1);
+  const time    = new Date().toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+  const item = document.createElement('div');
+  item.className = `txn-item${isFraud ? ' is-fraud' : ''}`;
+  item.innerHTML = `
+    <span class="txn-seq">${d.seq}</span>
+    <span class="txn-time">${time}</span>
+    <span class="txn-name">${d.first} ${d.last}</span>
+    <span class="txn-cat">${d.category}</span>
+    <span class="txn-city">${d.city}</span>
+    <span class="txn-amt" style="color:${isFraud?'#ef4444':'#e8eaf0'};">$${parseFloat(d.amt).toFixed(2)}</span>
+    <span class="txn-prob" style="color:${isFraud?'#ef4444':'#8892a4'};">${pct}%</span>
+    <span class="txn-badge">
+      <span class="badge ${isFraud?'badge-fraud':'badge-legit'}">${d.verdict}</span>
+    </span>`;
+
+  feed.insertBefore(item, feed.firstChild);
+  // Keep max 100 rows
+  while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+}
+
+function addAlert(d) {
+  const alertFeed = document.getElementById('alertFeed');
+  const placeholder = alertFeed.querySelector('div');
+  if (placeholder && placeholder.style.textAlign === 'center') placeholder.remove();
+
+  const time = new Date().toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const div = document.createElement('div');
+  div.style.cssText = 'padding:8px 10px;border-radius:6px;margin-bottom:4px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);font-size:12px;animation:slide-in .3s ease;';
+  div.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
+      <span style="font-weight:600;color:#fca5a5;">${d.first} ${d.last}</span>
+      <span style="color:var(--text3);">${time}</span>
+    </div>
+    <div style="color:var(--text2);">${d.category} · $${parseFloat(d.amt).toFixed(2)} · ${d.city}</div>
+    <div style="color:#ef4444;font-weight:600;">${(d.meta_prob*100).toFixed(1)}% xác suất gian lận</div>`;
+
+  alertFeed.insertBefore(div, alertFeed.firstChild);
+  while (alertFeed.children.length > 10) alertFeed.removeChild(alertFeed.lastChild);
+}
+
+// ── SSE Stream ──────────────────────────────────────────────────────────────
+function startStream() {
+  if (evtSource) return;
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('stopBtn').disabled  = false;
+  document.getElementById('liveStatus').textContent = 'Live';
+  document.getElementById('liveDot').classList.remove('stopped');
+  document.getElementById('liveIndicator').style.color = 'var(--green)';
+
+  evtSource = new EventSource('/api/live-stream/');
+  evtSource.onmessage = e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('modeTag').innerHTML =
+      d.mode === 'model'
+        ? '<span class="badge badge-model">✦ Real Model</span>'
+        : '<span class="badge badge-sim">⚙ Simulation</span>';
+
+    updateStats(d);
+    updateProbChart(d.meta_prob);
+    if (d.verdict === 'FRAUD') { windowFraud++; addAlert(d); }
+    updateRateChart();
+    updateCatChart(d);
+    addTxnRow(d);
+  };
+  evtSource.onerror = () => {
+    document.getElementById('liveStatus').textContent = 'Lỗi kết nối, thử lại...';
+  };
+}
+
+function stopStream() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled  = true;
+  document.getElementById('liveStatus').textContent = 'Đã dừng';
+  document.getElementById('liveDot').classList.add('stopped');
+  document.getElementById('liveIndicator').style.color = 'var(--text2)';
+}
+
+function clearFeed() {
+  document.getElementById('txnFeed').innerHTML = '<div style="text-align:center;padding:32px;color:var(--text3);font-size:13px;">Feed đã được xóa</div>';
+  document.getElementById('alertFeed').innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:16px;">Chưa có cảnh báo</div>';
+  stats = { total:0, fraud:0, amt:0, fraudAmt:0 };
+  probHistory.length = 0; rateHistory.length = 0;
+  Object.keys(catFraud).forEach(k => delete catFraud[k]);
+  ['ls-total','ls-fraud','ls-amt'].forEach(id => document.getElementById(id).textContent = '0');
+  document.getElementById('ls-fraud-amt').textContent = '$0';
+  document.getElementById('ls-rate').textContent = '0.0% tỷ lệ';
+  probChart.data.labels = []; probChart.data.datasets[0].data = []; probChart.update();
+  rateChart.data.labels = []; rateChart.data.datasets[0].data = []; rateChart.update();
+  catChart.data.labels  = []; catChart.data.datasets[0].data  = []; catChart.update();
+}
+
+// Auto-start
+window.addEventListener('load', () => setTimeout(startStream, 500));
+window.addEventListener('beforeunload', stopStream);
+</script>
+{% endblock %}

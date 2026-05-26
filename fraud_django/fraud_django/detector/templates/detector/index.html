@@ -1,0 +1,24 @@
+{% extends 'detector/base.html' %}
+{% block title %}Trang chủ{% endblock %}
+{% block content %}
+<div class="hero">
+  <h1>Phát hiện giao dịch gian lận</h1><br>
+  <div class="hero-cards">
+    <a class="hero-card" href="/single/">
+      <div class="hero-card-icon">🔍</div>
+      <h3>Giao dịch đơn lẻ</h3>
+      <p>Nhập thông tin một giao dịch và nhận kết quả phân tích ngay</p>
+    </a>
+    <a class="hero-card" href="/upload/">
+      <div class="hero-card-icon">📊</div>
+      <h3>Upload CSV</h3>
+      <p>Tải lên file CSV chứa nhiều giao dịch, hệ thống sẽ phân tích và vẽ dashboard trực quan</p>
+    </a>
+    <a class="hero-card" href="/live/">
+      <div class="hero-card-icon">📡</div>
+      <h3>Mô phỏng giao dịch trực tiếp</h3>
+      <p>Theo dõi giao dịch ngẫu nhiên được tạo liên tục và phân loại theo thời gian thực</p>
+    </a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,238 @@
+{% extends 'detector/base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="flex-between mb-16">
+  <div class="page-header" style="margin-bottom:0;">
+    <h1>Dashboard phân tích</h1>
+    <p id="dashSubtitle">Kết quả từ file CSV đã upload</p>
+  </div>
+  <a href="/upload/" class="btn btn-outline">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    Upload file mới
+  </a>
+</div>
+
+<div id="noData" class="card" style="text-align:center;padding:64px;display:none;">
+  <p style="color:var(--text2);">Chưa có dữ liệu. <a href="/upload/" style="color:var(--blue);">Upload CSV</a> trước.</p>
+</div>
+
+<div id="dashContent" style="display:none;">
+  <!-- Summary stats -->
+  <div class="stats-row stats-row-4 mb-16">
+    <div class="stat-card">
+      <div class="stat-label">Tổng giao dịch</div>
+      <div class="stat-value blue" id="st-total">—</div>
+      <div class="stat-sub">đã phân tích</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Gian lận phát hiện</div>
+      <div class="stat-value red" id="st-fraud">—</div>
+      <div class="stat-sub" id="st-fraud-rate">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Tổng giá trị</div>
+      <div class="stat-value blue" id="st-total-amt">—</div>
+      <div class="stat-sub">toàn bộ giao dịch</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Giá trị gian lận</div>
+      <div class="stat-value red" id="st-fraud-amt">—</div>
+      <div class="stat-sub">nghi ngờ gian lận</div>
+    </div>
+  </div>
+
+  <!-- Charts row 1 -->
+  <div class="chart-grid-2">
+    <div class="card">
+      <div class="card-title">Gian lận theo danh mục</div>
+      <div class="chart-wrap"><canvas id="chartCategory"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Gian lận theo giờ trong ngày</div>
+      <div class="chart-wrap"><canvas id="chartHour"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Charts row 2 -->
+  <div class="chart-grid-3">
+    <div class="card">
+      <div class="card-title">Phân phối số tiền</div>
+      <div class="chart-wrap"><canvas id="chartAmt"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Phân phối xác suất gian lận</div>
+      <div class="chart-wrap"><canvas id="chartProb"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Gian lận theo thứ</div>
+      <div class="chart-wrap"><canvas id="chartDow"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Top fraud table -->
+  <div class="card mt-16">
+    <div class="card-title">Top 10 giao dịch nghi ngờ gian lận cao nhất</div>
+    <div class="table-wrap">
+      <table id="fraudTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Số tiền</th>
+            <th>Danh mục</th>
+            <th>Giờ</th>
+            <th>XGBoost</th>
+            <th>LightGBM</th>
+            <th>Stack (Meta)</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody id="fraudTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const CHART_DEFAULTS = {
+  color: '#e8eaf0',
+  gridColor: 'rgba(42,51,71,.6)',
+  font: { family: '-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif', size: 11 },
+};
+Chart.defaults.color = CHART_DEFAULTS.color;
+Chart.defaults.font  = CHART_DEFAULTS.font;
+
+function makeBarChart(id, labels, data, color) {
+  return new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: color + 'cc', borderColor: color, borderWidth: 1, borderRadius: 4 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: CHART_DEFAULTS.gridColor }, ticks: { maxRotation: 35 } },
+        y: { grid: { color: CHART_DEFAULTS.gridColor }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function makeLineChart(id, labels, data) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.1)',
+        tension: 0.4, fill: true, pointRadius: 3, pointHoverRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: CHART_DEFAULTS.gridColor } },
+        y: { grid: { color: CHART_DEFAULTS.gridColor }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function makeGroupedBarChart(id, labels, datasets) {
+  return new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { boxWidth: 10 } } },
+      scales: {
+        x: { grid: { color: CHART_DEFAULTS.gridColor }, ticks: { maxRotation: 35 } },
+        y: { grid: { color: CHART_DEFAULTS.gridColor }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function renderDashboard(d) {
+  const s = d.summary;
+  document.getElementById('st-total').textContent     = s.total.toLocaleString();
+  document.getElementById('st-fraud').textContent     = s.n_fraud.toLocaleString();
+  document.getElementById('st-fraud-rate').textContent= s.fraud_rate + '% tỷ lệ gian lận';
+  document.getElementById('st-total-amt').textContent = '$' + s.total_amt.toLocaleString();
+  document.getElementById('st-fraud-amt').textContent = '$' + s.fraud_amt.toLocaleString();
+  document.getElementById('dashSubtitle').textContent = `${s.total} giao dịch · ${s.n_fraud} gian lận (${s.fraud_rate}%)`;
+
+  const c = d.charts;
+
+  // Category
+  const catLabels = Object.keys(c.by_category);
+  const catVals   = Object.values(c.by_category);
+  makeBarChart('chartCategory', catLabels, catVals, '#ef4444');
+
+  // Hour (0-23)
+  const hourLabels = Array.from({length:24}, (_,i) => i+'h');
+  const hourVals   = hourLabels.map((_,i) => c.by_hour[String(i)] || 0);
+  makeLineChart('chartHour', hourLabels, hourVals);
+
+  // Amount distribution
+  const amtLabels = Object.keys(c.amt_dist.all);
+  makeGroupedBarChart('chartAmt', amtLabels, [
+    { label:'Tất cả', data: amtLabels.map(k=>c.amt_dist.all[k]||0), backgroundColor:'rgba(59,130,246,.7)', borderRadius:3 },
+    { label:'Gian lận', data: amtLabels.map(k=>c.amt_dist.fraud[k]||0), backgroundColor:'rgba(239,68,68,.7)', borderRadius:3 },
+  ]);
+
+  // Prob histogram
+  const probLabels = Object.keys(c.prob_hist);
+  const probVals   = Object.values(c.prob_hist);
+  const probColors = probLabels.map((_, i) => {
+    const mid = (i / probLabels.length);
+    if (mid > 0.25) return 'rgba(239,68,68,.8)';
+    return 'rgba(59,130,246,.7)';
+  });
+  new Chart(document.getElementById('chartProb'), {
+    type: 'bar',
+    data: { labels: probLabels, datasets: [{ data: probVals, backgroundColor: probColors, borderRadius: 3 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: CHART_DEFAULTS.gridColor }, ticks: { maxRotation: 45, font: {size:10} } },
+        y: { grid: { color: CHART_DEFAULTS.gridColor }, beginAtZero: true },
+      },
+    },
+  });
+
+  // DOW
+  const dowLabels = Object.keys(c.by_dow);
+  const dowVals   = Object.values(c.by_dow);
+  makeBarChart('chartDow', dowLabels, dowVals, '#a855f7');
+
+  // Top fraud table
+  const tbody = document.getElementById('fraudTableBody');
+  tbody.innerHTML = (d.top_fraud || []).map((r, i) => `
+    <tr class="fraud-row">
+      <td>${i+1}</td>
+      <td class="mono" style="color:var(--red);">$${parseFloat(r.amt).toFixed(2)}</td>
+      <td>${r.category || '—'}</td>
+      <td>${r.hour !== undefined ? r.hour + 'h' : '—'}</td>
+      <td class="mono">${(r.xgb_prob*100).toFixed(1)}%</td>
+      <td class="mono">${(r.lgb_prob*100).toFixed(1)}%</td>
+      <td class="mono" style="font-weight:700;color:var(--red);">${(r.meta_prob*100).toFixed(1)}%</td>
+      <td><span class="badge badge-fraud">FRAUD</span></td>
+    </tr>`).join('');
+
+  document.getElementById('dashContent').style.display = 'block';
+}
+
+// Load data from sessionStorage
+const raw = sessionStorage.getItem('dashboardData');
+if (raw) {
+  try { renderDashboard(JSON.parse(raw)); }
+  catch(e) { document.getElementById('noData').style.display = 'block'; }
+} else {
+  document.getElementById('noData').style.display = 'block';
+}
+</script>
+{% endblock %}
